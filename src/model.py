@@ -7,6 +7,8 @@ import os
 import json
 from matplotlib import pyplot as plt
 from csbdeep.utils import normalize
+import cv2
+
 #TODO: ImageJ loader
 class StarDistAPI:
     def __init__(self,
@@ -57,17 +59,20 @@ class StarDistAPI:
             loader = VGGLoader(self.image_dir, self.csv_dir)
             
         length = len(loader)
-        dataset = loader.data()
 
         for epoch in range(self.epochs):    
-            X_train, y_train = [], []
-            X_val, y_val = [], []
-            for X, y in dataset:
+            X_train, y_train, classes_train = [], [], []
+            X_val, y_val, classes_val = [], [], []
+            dataset = loader.data()
+            for X, y, classes in dataset:
                 if len(X_val) < self.val_size:
-                    X_val.append(X), y_val.append(y)
+                    X_val.append(X)
+                    y_val.append(y)
+                    classes_val.append(classes)
                 else:
                     X_train.append(X)
                     y_train.append(y)
+                    classes_train.append(classes)
                 
                 if len(X_train) == self.batch_size:
                     X_arr = np.array(X_train)
@@ -79,21 +84,22 @@ class StarDistAPI:
 
                     y_arr = np.array(y_train)
                     y_val_arr = np.array(y_val)
-                    
+                  
                     if self.model.config.axes != self.mask_format:
                         y_arr = y_arr.transpose(axes=(1, 0, 2))
                         y_val_arr = y_val_arr.transpose(axes=(1, 0, 2))
+                    
+                    classes_arr = classes_train.copy()
+                    classes_val_arr = classes_val.copy()
                     
                     if not self.thresholds_optimized:
                         self.model.optimize_thresholds(X_val_arr, y_val_arr)
                         self.thresholds_optimized = True
                     
-                    X_train = []; y_train = []
-                    X_val = []; y_val = []
-                    
-                    class_labels_dct = [{i+1:i} for i in range(self.model.config.n_classes)]
-                    
-                    self.model.train(X_arr, y_arr, validation_data=(X_val_arr, y_val_arr, class_labels_dct), epochs=1, classes=class_labels_dct)
+                    X_train = []; y_train = []; classes_train = []
+                    X_val = []; y_val = []; classes_val = []
+                                        
+                    self.model.train(X_arr, y_arr, validation_data=(X_val_arr, y_val_arr, classes_val_arr), epochs=1, classes=classes_arr)
                     yield (length * (epoch) + (length - len(loader))) / length * self.epochs # Percentage of training done
 class Loader:
     def __init__(self,
@@ -115,6 +121,8 @@ class Loader:
         
         self.images = {}
         self.labels = {}
+        self.class_mappings = {}
+
         
         self._load_images()
     
@@ -144,11 +152,11 @@ class Loader:
                 self.image_len = (self.image_len[1]+1, min(self.image_len[1] + self.memory_limit, len(self.image_paths) - self.image_len[1]))
                 self._load_images()
             
-            img, lbl = self.images.pop(name), self.labels.pop(name)
+            img, lbl, mapping = self.images.pop(name), self.labels.pop(name), self.class_mappings.pop(name)
             self.length -= 1
             
            
-            yield img, lbl
+            yield img, lbl, mapping
     
     def __len__(self):
         return self.length
@@ -166,9 +174,42 @@ class ImageJLoader(Loader):
     def _load_label(self, name, *args):
         path = list(self.label_dir.glob(f"{name}.*"))[0]
         with Image.open(path) as label:
-            label = np.array(label)
-            self.labels[name] = label
-        
+            
+            mask = self._binary_mapper(label)
+            self.labels[name] = mask
+            
+            found_classes = self._get_countour_pixels(label)
+            object_ids = [i+1 for i in range(len(found_classes))]
+            class_mapping = {k:v for k, v in zip(object_ids, found_classes)}
+            self.class_mappings[name] = class_mapping
+            
+    def _binary_mapper(self, img: Image.Image):
+        """Turns a single channel image into a binary mask where any color results in a 1, and 0s lead to 0
+
+        Args:
+            img (PIL.Image.Image): The input image in mode 'L'
+
+        Returns:
+            mask (nd.array): The boolean array
+        """
+        data = np.array(img)
+        mask = np.ma.make_mask(data)
+        mask = mask.astype(np.uint8)
+        return mask
+    
+    def _get_countour_pixels(self, img: Image.Image):
+        # L/greyscale image
+        data = np.array(img)
+        contours = cv2.findContours(data, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        pixel_lst = []
+        for contour in contours:
+            moment = cv2.moments(contour)
+            cx = int(moment['m10']/moment['m00'])
+            cy = int(moment['m01']/moment['m00']) 
+            pixel_lst.append(data[cx, cy])
+        return pixel_lst
+            
+    
 class VGGLoader(Loader):
     def __init__(self,
                  image_dir: os.PathLike,
@@ -179,30 +220,35 @@ class VGGLoader(Loader):
 
     def _load_label(self, name, size):
         path = self.label_dir / Path(name + ".csv")
-        self.labels[name] = self._csv_to_label_mask(path, size)
+        self.labels[name], self.class_mappings[name] = self._csv_to_label_mask(path, size)
         
     
     def _csv_to_label_mask(self, path, img_size):
+        current_shape = 1
+        class_mapper_iter = {}
+        
         def add_label(row):
+            nonlocal current_shape, class_mapper_iter
             shape = json.loads(row['region_shape_attributes'])
             classes = json.loads(row['region_attributes'])
+            
             class_int = int(classes['class_name']) + 1
+            class_mapper_iter[current_shape] = class_int
+            current_shape += 1
             
             if shape['name'] == 'circle':
-                canvas.circle(xy=(shape['cx'], shape['cy']), radius=shape['r'], fill=class_int, outline=class_int)
+                canvas.circle(xy=(shape['cx'], shape['cy']), radius=shape['r'], fill=1, outline=1)
             else:
                 raise ValueError('Shape not a circle, please implement non circular shapes in this code')
         
-        mask = Image.new(mode='L', size=img_size, color=0)
-        canvas = ImageDraw.Draw(mask, mode='L')
+        mask = Image.new(mode='1', size=img_size, color=0)
+        canvas = ImageDraw.Draw(mask, mode='1')
         data = pd.read_csv(path)[['region_shape_attributes', 'region_attributes']]
         data.apply(add_label, axis=1)
-                
-        return np.array(mask)
+        
+        return np.array(mask).astype(np.uint8), class_mapper_iter
     
-if __name__ == '__main__':
-    loader = VGGLoader('data/images', 'data/csv')
-    
+
 
 # if __name__ == '__main__':
     

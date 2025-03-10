@@ -57,6 +57,7 @@ def train(event):
         train_gen = model.train()
         for progress in train_gen:
             loadingbar_widget.value = int(round(progress * 100))
+        loadingbar_widget.value = 1
         loadingbar_widget.active = False
         
 
