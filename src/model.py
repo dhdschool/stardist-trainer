@@ -85,17 +85,21 @@ class StarDistAPI:
                 yield len(loader) / length # Percentage of training done
 class Loader:
     def __init__(self,
-                 image_dir,
-                 label_dir,
-                 memory_limit=32):
-        self.image_dir = image_dir
+                 image_dir: os.PathLike,
+                 label_dir: os.PathLike,
+                 memory_limit:int=32):
+        self.image_dir = Path(image_dir)
+        self.label_dir = Path(label_dir)
         self.memory_limit = memory_limit
         
-        self.image_paths = list(map(lambda x: str(self.image_dir / Path(x)),
+        self.image_paths = list(map(lambda x: Path(str(self.image_dir / Path(x))),
                                     os.listdir(self.image_dir)))
         
+        self.label_paths =  list(map(lambda x: Path(str(self.label_dir / Path(x))),
+                                    os.listdir(self.label_dir)))
+        
         self.image_len = (0, min(self.memory_limit, len(self.image_paths)))
-        self.length = len(self.images_paths)
+        self.length = len(self.image_paths)
         
         self.images = {}
         self.labels = {}
@@ -105,20 +109,21 @@ class Loader:
     def _load_images(self):
         for index in range(*self.image_len):
             name = self.image_paths[index].stem
+            path = self.image_paths[index]
             
-            with Image.open(name) as img:
+            with Image.open(path) as img:
                 img_rgb = img.convert('RGB')
                 img_rgb = np.array(img_rgb)
                 img_rgb = normalize(img_rgb, 1, 99.8)
                 self.images[name] = img_rgb
-                self._load_label(name)
+                self._load_label(name, img.size)
             
-    def _load_label(self, name):
-        pass
+    def _load_label(self, name, size):
+       pass
     
     def data(self):
         for index in range(len(self.image_paths)):
-            name = self.image_paths[index]
+            name = self.image_paths[index].stem
             
             if len(self.images) == 0 and index != len(self.image_paths) - 1:
                 self.image_len = (self.image_len[1]+1, min(self.image_len[1] + self.memory_limit, len(self.image_paths) - self.image_len[1]))
@@ -131,100 +136,33 @@ class Loader:
             yield img, lbl
     
  
-class ImageJLoader():
+class ImageJLoader(Loader):
     def __init__(self,
-                 image_dir,
-                 mask_dir,
-                 memory_limit=32):
+                 image_dir: os.PathLike,
+                 mask_dir: os.PathLike,
+                 memory_limit: int=32):
         
-        self.image_dir = image_dir
-        self.mask_dir = mask_dir
-        self.memory_limit = memory_limit
-
-        self.image_paths = list(map(lambda x: str(self.image_dir / Path(x)),
-                                    os.listdir(self.image_dir)))
-
-        self.mask_paths = list(map(lambda x: str(self.image_dir / Path(x), 
-                                                 os.listdir(self.image_dir))))  
+        super().__init__(image_dir=image_dir, label_dir=mask_dir, memory_limit=memory_limit)
         
-        self.image_len = (0, min(self.memory_limit, len(self.image_paths)))
-        self.length = len(self.images_paths)
+    #Overwrite
+    def _load_label(self, name, *args):
+        path = list(self.label_dir.glob(f"{name}.*"))[0]
+        with Image.open(path) as label:
+            label = np.array(label)
+            self.labels[name] = label
         
-        self.images = {}
-        self.labels = {}
-        
-        self._load_images()
-        
-    def _load_images(self):
-        for index in range(*self.image_len):
-            name = self.image_paths[index]
-            
-            with Image.open(name) as img:
-                img_rgb = img.convert('RGB')
-                img_rgb = np.array(img_rgb)
-                img_rgb = normalize(img_rgb, 1, 99.8)
-                self.images[name] = img_rgb
-            
-   
-    def data(self):
-        for index in range(len(self.image_paths)):
-            name = self.image_paths[index]
-            
-            if len(self.images) == 0 and index != len(self.image_paths) - 1:
-                self.image_len = (self.image_len[1]+1, min(self.image_len[1] + self.memory_limit, len(self.image_paths) - self.image_len[1]))
-                self._load_images()
-            
-            img, lbl = self.images.pop(name), self.labels.pop(name)
-            self.length -= 1
-            
-           
-            yield img, lbl
-                
-    def __len__(self):
-        return self.length
-        
-class VGGLoader():
+class VGGLoader(Loader):
     def __init__(self,
-                 image_dir,
-                 csv_dir,
-                 from_csv=True,
-                 memory_limit=32):
+                 image_dir: os.PathLike,
+                 csv_dir: os.PathLike,
+                 memory_limit:int=32):
+        super().__init__(image_dir=image_dir, label_dir=csv_dir, memory_limit=memory_limit)
         
-        self.image_dir = image_dir
-        self.csv_dir = csv_dir
-        self.from_csv = from_csv
-        self.memory_limit = memory_limit
+
+    def _load_label(self, name, size):
+        path = Path(name + ".csv")
         
-        self.image_paths = list(map(lambda x: str(self.image_dir / Path(x)),
-                                    os.listdir(self.image_dir)))
-                
-        self.image_len = (0, min(self.memory_limit, len(self.image_paths)))
-        self.length = len(self.images_paths)
-        
-        self.images = {}
-        self.labels = {}
-        #self.counts = {}
-       # self.give_counts = False
-        
-        self._load_images()
-        
-    def _load_images(self):
-        for index in range(*self.image_len):
-            name = self.image_paths[index]
-            
-            with Image.open(name) as img:
-                img_rgb = img.convert('RGB')
-                img_rgb = np.array(img_rgb)
-                img_rgb = normalize(img_rgb, 1, 99.8)
-                self.images[name] = img_rgb
-            
-                if self.from_csv:
-                    csv_path = self.csv_dir / Path(name).with_suffix('.csv').name
-                    label = self._csv_to_label_mask(csv_path, img.size)
-                    #count = pd.read_csv(csv_path)['region_count'].head(1).squeeze()
-                    self.labels[name] = label
-                    #self.counts[name] = count
-                
+    
     def _csv_to_label_mask(self, path, img_size):
         mask = Image.new(mode='1', size=img_size, color=0)
         canvas = ImageDraw.Draw(mask, mode='1')
@@ -239,23 +177,6 @@ class VGGLoader():
 
         return np.array(mask)
     
-    def data(self):
-        for index in range(len(self.image_paths)):
-            name = self.image_paths[index]
-            
-            if len(self.images) == 0 and index != len(self.image_paths) - 1:
-                self.image_len = (self.image_len[1]+1, min(self.image_len[1] + self.memory_limit, len(self.image_paths) - self.image_len[1]))
-                self._load_images()
-            
-            img, lbl = self.images.pop(name), self.labels.pop(name)
-            self.length -= 1
-            
-           
-            yield img, lbl
-                
-    def __len__(self):
-        return self.length
-
 
 # if __name__ == '__main__':
     
