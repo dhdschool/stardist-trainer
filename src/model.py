@@ -39,7 +39,7 @@ class StarDistAPI:
                                 name=model_name,
                                 basedir=model_dir)
         
-        if config == None:
+        if config not None:
             self.thresholds_optimized = False
         else:
             self.thresholds_optimized = True
