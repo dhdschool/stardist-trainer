@@ -119,16 +119,15 @@ class Loader:
         self.image_len = (0, min(self.memory_limit, len(self.image_paths)))
         self.length = len(self.image_paths)
         
-        self.images = {}
-        self.labels = {}
-        self.class_mappings = {}
-
-        
         self._load_images()
     
     def _load_images(self):
         if self.image_len[0] >= self.length:
             self.image_len = (0, min(self.memory_limit, self.image_paths))
+            
+        self.images = {}
+        self.labels = {}
+        self.class_mappings = {}
         
         for index in range(*self.image_len):
             name = self.image_paths[index].stem
