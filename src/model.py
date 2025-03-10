@@ -37,6 +37,11 @@ class StarDistAPI:
                                 name=model_name,
                                 basedir=model_dir)
         
+        if config == None:
+            self.thresholds_optimized = False
+        else:
+            self.thresholds_optimized = True
+         
         self.epochs = epochs
         self.val_size = int(round((val_per / 100) * batch_size, 0))
         self.image_format = image_format
@@ -46,9 +51,10 @@ class StarDistAPI:
 
         self.model.prepare_for_training()
         
-    def train(self):
+        
+    def train(self):        
         if self.imagej:
-            pass
+            loader = ImageJLoader(self.image_dir, self.mask_dir)
         if not self.imagej:
             loader = VGGLoader(self.image_dir, self.csv_dir)
             
@@ -77,6 +83,10 @@ class StarDistAPI:
                 if self.model.config.axes != self.mask_format:
                     y_arr = y_arr.transpose(axes=(1, 0, 2))
                     y_val_arr = y_val_arr.transpose(axes=(1, 0, 2))
+                
+                if not self.thresholds_optimized:
+                    self.model.optimize_thresholds(X_val_arr, y_val_arr)
+                    self.thresholds_optimized = True
                 
                 X_train = []; y_train = []
                 X_val = []; y_val = []
@@ -135,6 +145,9 @@ class Loader:
            
             yield img, lbl
     
+    def __len__(self):
+        return self.length
+    
  
 class ImageJLoader(Loader):
     def __init__(self,
@@ -160,22 +173,30 @@ class VGGLoader(Loader):
         
 
     def _load_label(self, name, size):
-        path = Path(name + ".csv")
+        path = self.label_dir / Path(name + ".csv")
+        self.labels[name] = self._csv_to_label_mask(path, size)
         
     
     def _csv_to_label_mask(self, path, img_size):
-        mask = Image.new(mode='1', size=img_size, color=0)
-        canvas = ImageDraw.Draw(mask, mode='1')
-        
-        data = pd.read_csv(path)['region_shape_attributes'].to_list()
-        for shape in data:
-            shape = json.loads(shape)
+        def add_label(row):
+            shape = json.loads(row['region_shape_attributes'])
+            classes = json.loads(row['region_attributes'])
+            class_int = int(classes['class_name']) + 1
+            
             if shape['name'] == 'circle':
-                canvas.circle(xy=(shape['cx'], shape['cy']), radius=shape['r'], fill=1, outline=1)
+                canvas.circle(xy=(shape['cx'], shape['cy']), radius=shape['r'], fill=class_int, outline=class_int)
             else:
                 raise ValueError('Shape not a circle, please implement non circular shapes in this code')
-
+        
+        mask = Image.new(mode='L', size=img_size, color=0)
+        canvas = ImageDraw.Draw(mask, mode='L')
+        data = pd.read_csv(path)[['region_shape_attributes', 'region_attributes']]
+        data.apply(add_label, axis=1)
+                
         return np.array(mask)
+    
+if __name__ == '__main__':
+    loader = VGGLoader('data/images', 'data/csv')
     
 
 # if __name__ == '__main__':

@@ -42,13 +42,14 @@ def train(event):
         model = StarDistAPI(image_dir,
                             model_dir,
                             epochs,
+                            batch_size,
                             validation_percentage,
                             image_format,
                             mask_format,
                             imagej,
                             overwrite,
-                            config_kwargs=config,
-                            batch_size=batch_size)
+                            config_kwargs=config
+                            )
         
         train_gen = model.train()
         loadingbar_widget.active = True
@@ -113,8 +114,8 @@ batch_text = pn.widgets.StaticText(name="Batch Size", align='center')
 batch_widget = pn.Row(batch_text, batch_input, sizing_mode='fixed', width=sidebar_widgth)
 
 coord_formats = [
-    "XYC",
-    "YXC"
+    "YXC",
+    "XYC"
 ]
 
 image_format_text = pn.widgets.StaticText(name="Image coord format", align='center')
@@ -127,7 +128,7 @@ mask_format_widget = pn.Row(mask_format_text, mask_format_selector, sizing_mode=
 
 config_overwrite_width = 200
 co_axes_text = pn.widgets.StaticText(name="axes", align='center')
-co_axes_selector = pn.widgets.Select(options=list(reversed(coord_formats)))
+co_axes_selector = pn.widgets.Select(options=coord_formats)
 co_axes_widget = pn.Row(co_axes_text, co_axes_selector, sizing_mode='fixed', width=config_overwrite_width)
 
 co_nrays_text = pn.widgets.StaticText(name="n_rays", align='center')
