@@ -31,13 +31,15 @@ def train(event):
         imagej = ij_switch.value
         overwrite = model_ow_switch.value
         
-        classes = None if co_classes_input.value == 1 else co_classes_input.value
+        classes = co_classes_input.value
         config = {
             'axes': co_axes_selector.value[:2],
             'n_rays': co_nrays_input.value,
             'n_channel_in': co_channels_input.value,
             'n_classes': classes
         }
+        loadingbar_widget.value = 0
+
         
         model = StarDistAPI(image_dir,
                             model_dir,
@@ -51,8 +53,8 @@ def train(event):
                             config_kwargs=config
                             )
         
-        train_gen = model.train()
         loadingbar_widget.active = True
+        train_gen = model.train()
         for progress in train_gen:
             loadingbar_widget.value = int(round(progress * 100))
         loadingbar_widget.active = False
@@ -76,7 +78,7 @@ filedir = pn.Column(image_widget, pn.Spacer(height=50), model_widget)
 
 exit_widget = pn.widgets.Button(name='Server Shutdown', button_type='danger')
 train_widget = pn.widgets.Button(name='Train Model', button_type='primary')
-loadingbar_widget = pn.widgets.Progress(max=100, bar_color='success')
+loadingbar_widget = pn.widgets.Progress(max=100, bar_color='success', active=False)
 
 with open(Path('md') / Path('info.md')) as file:
     info = file.read()

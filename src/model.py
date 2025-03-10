@@ -48,51 +48,53 @@ class StarDistAPI:
         self.mask_format = mask_format
         self.imagej = imagej
         self.batch_size = batch_size
-
-        self.model.prepare_for_training()
         
         
-    def train(self):        
+    def train(self):
         if self.imagej:
             loader = ImageJLoader(self.image_dir, self.mask_dir)
         if not self.imagej:
             loader = VGGLoader(self.image_dir, self.csv_dir)
             
-        dataset = loader.data()
         length = len(loader)
-        
-        X_train, y_train = [], []
-        X_val, y_val = [], []
-        for X, y in dataset:
-            if len(X_val) < self.val_size:
-                X_val.append(X), y_val.append(y)
-            else:
-                X_train.append(X)
-                y_train.append(y)
-            
-            if len(X_train) == self.batch_size:
-                
-                X_arr = np.array(X_train)
-                X_val_arr = np.array(X_val)
-                if self.model.config.axes != self.image_format:
-                    X_arr = X_arr.transpose(axes=(1, 0, 2))
-                    X_val_arr = X_val_arr.transpose(axes=(1, 0, 2))
+        dataset = loader.data()
 
-                y_arr = np.array(y_train)
-                y_val_arr = np.array(y_val)
-                if self.model.config.axes != self.mask_format:
-                    y_arr = y_arr.transpose(axes=(1, 0, 2))
-                    y_val_arr = y_val_arr.transpose(axes=(1, 0, 2))
+        for epoch in range(self.epochs):    
+            X_train, y_train = [], []
+            X_val, y_val = [], []
+            for X, y in dataset:
+                if len(X_val) < self.val_size:
+                    X_val.append(X), y_val.append(y)
+                else:
+                    X_train.append(X)
+                    y_train.append(y)
                 
-                if not self.thresholds_optimized:
-                    self.model.optimize_thresholds(X_val_arr, y_val_arr)
-                    self.thresholds_optimized = True
-                
-                X_train = []; y_train = []
-                X_val = []; y_val = []
-                
-                self.model.train(X_arr, y_arr, validation_data=(X_val_arr, y_val_arr), epochs=self.epochs)
-                yield len(loader) / length # Percentage of training done
+                if len(X_train) == self.batch_size:
+                    X_arr = np.array(X_train)
+                    X_val_arr = np.array(X_val)
+                    
+                    if self.model.config.axes != self.image_format:
+                        X_arr = X_arr.transpose(axes=(1, 0, 2))
+                        X_val_arr = X_val_arr.transpose(axes=(1, 0, 2))
+
+                    y_arr = np.array(y_train)
+                    y_val_arr = np.array(y_val)
+                    
+                    if self.model.config.axes != self.mask_format:
+                        y_arr = y_arr.transpose(axes=(1, 0, 2))
+                        y_val_arr = y_val_arr.transpose(axes=(1, 0, 2))
+                    
+                    if not self.thresholds_optimized:
+                        self.model.optimize_thresholds(X_val_arr, y_val_arr)
+                        self.thresholds_optimized = True
+                    
+                    X_train = []; y_train = []
+                    X_val = []; y_val = []
+                    
+                    class_labels_dct = [{i+1:i} for i in range(self.model.config.n_classes)]
+                    
+                    self.model.train(X_arr, y_arr, validation_data=(X_val_arr, y_val_arr, class_labels_dct), epochs=1, classes=class_labels_dct)
+                    yield (length * (epoch) + (length - len(loader))) / length * self.epochs # Percentage of training done
 class Loader:
     def __init__(self,
                  image_dir: os.PathLike,
@@ -117,6 +119,9 @@ class Loader:
         self._load_images()
     
     def _load_images(self):
+        if self.image_len[0] >= self.length:
+            self.image_len = (0, min(self.memory_limit, self.image_paths))
+        
         for index in range(*self.image_len):
             name = self.image_paths[index].stem
             path = self.image_paths[index]
