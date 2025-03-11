@@ -34,7 +34,7 @@ class StarDistAPI:
         model_name = model_dir.name
         model_dir = model_dir.parent
         
-        config = Config2D(**config_kwargs) if overwrite else None
+        config = Config2D(grid=(2, 2), **config_kwargs) if overwrite else None
         
         self.model = StarDist2D(config=config,
                                 name=model_name,
