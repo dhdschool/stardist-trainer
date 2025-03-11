@@ -1,3 +1,4 @@
+import tensorflow as tf
 from stardist.models import StarDist2D, Config2D
 from pathlib import Path
 from PIL import Image, ImageDraw
@@ -8,8 +9,8 @@ import json
 from matplotlib import pyplot as plt
 from csbdeep.utils import normalize
 import cv2
+from math import ceil
 
-#TODO: ImageJ loader
 class StarDistAPI:
     def __init__(self,
                  image_dir,
@@ -45,7 +46,8 @@ class StarDistAPI:
             self.thresholds_optimized = True
          
         self.epochs = epochs
-        self.val_size = int(round((val_per / 100) * batch_size, 0))
+        self.val_size = max(int(ceil((val_per / 100) * batch_size)), 
+                            1)
         self.image_format = image_format
         self.mask_format = mask_format
         self.imagej = imagej
@@ -92,15 +94,19 @@ class StarDistAPI:
                     classes_arr = classes_train.copy()
                     classes_val_arr = classes_val.copy()
                     
-                    if not self.thresholds_optimized:
-                        self.model.optimize_thresholds(X_val_arr, y_val_arr)
-                        self.thresholds_optimized = True
+                    
                     
                     X_train = []; y_train = []; classes_train = []
                     X_val = []; y_val = []; classes_val = []
                                         
                     self.model.train(X_arr, y_arr, validation_data=(X_val_arr, y_val_arr, classes_val_arr), epochs=1, classes=classes_arr)
-                    yield (length * (epoch) + (length - len(loader))) / length * self.epochs # Percentage of training done
+                    yield (length * (epoch) + (length - len(loader))) / (length * self.epochs) # Percentage of training done
+                    
+            if not self.thresholds_optimized:
+                self.model.optimize_thresholds(X_arr, y_arr)
+                self.thresholds_optimized = True
+                
+        yield 1
 class Loader:
     def __init__(self,
                  image_dir: os.PathLike,
@@ -123,7 +129,7 @@ class Loader:
     
     def _load_images(self):
         if self.image_len[0] >= self.length:
-            self.image_len = (0, min(self.memory_limit, self.image_paths))
+            self.image_len = (0, min(self.memory_limit, len(self.image_paths)))
             
         self.images = {}
         self.labels = {}
@@ -156,11 +162,13 @@ class Loader:
             
            
             yield img, lbl, mapping
-    
+        self.length = len(self.image_paths)
+
+        
     def __len__(self):
         return self.length
     
- 
+#TODO: Rewrite to include object differentiation to class mapping
 class ImageJLoader(Loader):
     def __init__(self,
                  image_dir: os.PathLike,
@@ -223,30 +231,87 @@ class VGGLoader(Loader):
         
     
     def _csv_to_label_mask(self, path, img_size):
-        current_shape = 1
         class_mapper_iter = {}
         
         def add_label(row):
-            nonlocal current_shape, class_mapper_iter
+            class_mapper_iter
+            
             shape = json.loads(row['region_shape_attributes'])
             classes = json.loads(row['region_attributes'])
+            object_id = row['region_id'] + 1
             
             class_int = int(classes['class_name']) + 1
-            class_mapper_iter[current_shape] = class_int
-            current_shape += 1
+            
+            class_mapper_iter[object_id] = class_int
             
             if shape['name'] == 'circle':
-                canvas.circle(xy=(shape['cx'], shape['cy']), radius=shape['r'], fill=1, outline=1)
+                canvas.circle(xy=(shape['cx'], shape['cy']), radius=shape['r'], fill=object_id, outline=object_id)
             else:
                 raise ValueError('Shape not a circle, please implement non circular shapes in this code')
         
-        mask = Image.new(mode='1', size=img_size, color=0)
-        canvas = ImageDraw.Draw(mask, mode='1')
-        data = pd.read_csv(path)[['region_shape_attributes', 'region_attributes']]
+        mask = Image.new(mode='L', size=img_size, color=0)
+        canvas = ImageDraw.Draw(mask, mode='L')
+        data = pd.read_csv(path)[['region_shape_attributes', 'region_attributes', 'region_id']]
         data.apply(add_label, axis=1)
         
         return np.array(mask).astype(np.uint8), class_mapper_iter
     
+if __name__ == '__main__':
+    
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Currently, memory growth needs to be the same across GPUs
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+                logical_gpus = tf.config.list_logical_devices('GPU')
+                print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
+           
+    #images_dir needs a subdirectory named images and one named csv
+    image_dir = "data"
+    
+    #model dir where model is stored or being written to
+    model_dir = "test"
+    
+    epochs = 300
+    batch_size = 11
+    validation_percentage = 20
+    image_format = 'YXC'
+    mask_format = 'YXC'
+    imagej = False
+    
+    # Makes a new model, turn off once one is created
+    # This consumes a lot of memory, be careful
+    overwrite = False
+    
+    
+    classes = 4
+    
+    config = {
+        'axes': 'YXC',
+        'n_rays': 32,
+        'n_channel_in': 3,
+        'n_classes': classes
+    }
+
+    
+    model = StarDistAPI(image_dir,
+                        model_dir,
+                        epochs,
+                        batch_size,
+                        validation_percentage,
+                        image_format,
+                        mask_format,
+                        imagej,
+                        overwrite,
+                        config_kwargs=config
+                        )
+    
+    for progress in model.train():
+        print(f"Progress: {progress*100}% done")
 
 
 # if __name__ == '__main__':
