@@ -1,5 +1,8 @@
 import tensorflow as tf
 from stardist.models import StarDist2D, Config2D
+from matplotlib import pyplot as plt
+import seaborn as sns
+
 from pathlib import Path
 from PIL import Image, ImageDraw
 import numpy as np
@@ -10,6 +13,7 @@ from matplotlib import pyplot as plt
 from csbdeep.utils import normalize
 import cv2
 from math import ceil
+import sys
 
 class StarDistAPI:
     def __init__(self,
@@ -30,7 +34,7 @@ class StarDistAPI:
         self.mask_dir = Path(image_dir) / Path('masks')
         self.csv_dir = Path(image_dir) / Path('csv')
         
-        model_dir = Path(model_dir).absolute()
+        self.model_dir = Path(model_dir).absolute()
         model_name = model_dir.name
         model_dir = model_dir.parent
         
@@ -52,6 +56,12 @@ class StarDistAPI:
         self.mask_format = mask_format
         self.imagej = imagej
         self.batch_size = batch_size
+        
+        self.train_columns = ['dist_loss', 'prob_class_loss']
+        self.val_columns = ['val_dist_loss', 'val_prob_class_loss']
+        
+        self.history_columns = self.train_columns + self.val_columns
+        self.history = pd.DataFrame([], columns=self.history_columns)
         
         
     def train(self):
@@ -99,14 +109,46 @@ class StarDistAPI:
                     X_train = []; y_train = []; classes_train = []
                     X_val = []; y_val = []; classes_val = []
                                         
-                    self.model.train(X_arr, y_arr, validation_data=(X_val_arr, y_val_arr, classes_val_arr), epochs=1, classes=classes_arr)
+                    history = self.model.train(X_arr, y_arr, validation_data=(X_val_arr, y_val_arr, classes_val_arr), epochs=1, classes=classes_arr)
+                    self._add_history(history)
+                    
                     yield (length * (epoch) + (length - len(loader))) / (length * self.epochs) # Percentage of training done
                     
             if not self.thresholds_optimized:
                 self.model.optimize_thresholds(X_arr, y_arr)
                 self.thresholds_optimized = True
-                
+        
         yield 1
+        
+    def _add_history(self, history):
+        history = pd.DataFrame(history.history)[self.history_columns]
+        self.history = pd.concat([self.history, history], axis=0, ignore_index=True)
+        
+    def history_chart(self):
+        fig, axes = plt.subplots(1, 2)
+        
+        sns.lineplot(
+            data=self.history[self.val_columns],
+            ax=axes[0]
+        )
+        
+        sns.lineplot(
+            data=self.history[self.train_columns],
+            ax=axes[1]
+        )
+        
+        axes[0].set_title('Loss over steps on validation data')
+        axes[1].set_title('Loss over steps on training data')
+        
+        axes[0].set_xlabel('Steps')
+        axes[1].set_xlabel('Steps')
+        
+        axes[0].set_ylabel('Loss')
+        axes[1].set_ylabel('Loss')
+        
+        plt.savefig(self.model_dir / Path('training_stats.png'))
+        
+        
 class Loader:
     def __init__(self,
                  image_dir: os.PathLike,
@@ -276,7 +318,7 @@ if __name__ == '__main__':
     #model dir where model is stored or being written to
     model_dir = "test"
     
-    epochs = 300
+    epochs = 5
     batch_size = 11
     validation_percentage = 20
     image_format = 'YXC'
@@ -285,7 +327,7 @@ if __name__ == '__main__':
     
     # Makes a new model, turn off once one is created
     # This consumes a lot of memory, be careful
-    overwrite = False
+    overwrite = True
     
     
     classes = 4
@@ -310,9 +352,10 @@ if __name__ == '__main__':
                         config_kwargs=config
                         )
     
+    counts = 5
     for progress in model.train():
         print(f"Progress: {progress*100}% done")
-
+    model.history_chart()
 
 # if __name__ == '__main__':
     
