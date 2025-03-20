@@ -185,5 +185,5 @@ app = pn.template.MaterialTemplate(
     sidebar=sidebar
 ).servable()
 
-if __name__ == 'main__':
+if __name__ == '__main__':
     pn.serve({"app.py":app}, port=5006)

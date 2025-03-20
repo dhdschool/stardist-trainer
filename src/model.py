@@ -1,6 +1,7 @@
 import tensorflow as tf
 from stardist.models import StarDist2D, Config2D
 from matplotlib import pyplot as plt
+from matplotlib.lines import Line2D
 import seaborn as sns
 
 from pathlib import Path
@@ -35,8 +36,8 @@ class StarDistAPI:
         self.csv_dir = Path(image_dir) / Path('csv')
         
         self.model_dir = Path(model_dir).absolute()
-        model_name = model_dir.name
-        model_dir = model_dir.parent
+        model_name = self.model_dir.name
+        model_dir = self.model_dir.parent
         
         config = Config2D(grid=(2, 2), **config_kwargs) if overwrite else None
         
@@ -70,6 +71,9 @@ class StarDistAPI:
         if not self.imagej:
             loader = VGGLoader(self.image_dir, self.csv_dir)
             
+        #TODO: DELETE
+        #sys.exit()    
+        
         length = len(loader)
 
         for epoch in range(self.epochs):    
@@ -112,7 +116,7 @@ class StarDistAPI:
                     history = self.model.train(X_arr, y_arr, validation_data=(X_val_arr, y_val_arr, classes_val_arr), epochs=1, classes=classes_arr)
                     self._add_history(history)
                     
-                    yield (length * (epoch) + (length - len(loader))) / (length * self.epochs) # Percentage of training done
+                    yield (length * epoch + (length - len(loader))) / (length * self.epochs) # Percentage of training done
                     
             if not self.thresholds_optimized:
                 self.model.optimize_thresholds(X_arr, y_arr)
@@ -125,26 +129,36 @@ class StarDistAPI:
         self.history = pd.concat([self.history, history], axis=0, ignore_index=True)
         
     def history_chart(self):
-        fig, axes = plt.subplots(1, 2)
+        fig, axes = plt.subplots(1, 2, figsize=(10, 10))
         
         sns.lineplot(
-            data=self.history[self.val_columns],
-            ax=axes[0]
+            data=self.history[[self.train_columns[0], self.val_columns[0]]],
+            ax=axes[0],
+            legend=True
         )
         
         sns.lineplot(
-            data=self.history[self.train_columns],
-            ax=axes[1]
+            data=self.history[[self.train_columns[1], self.val_columns[1]]],
+            ax=axes[1],
+            legend=True
         )
         
-        axes[0].set_title('Loss over steps on validation data')
-        axes[1].set_title('Loss over steps on training data')
+        handles = [
+            Line2D([0], [0], color='blue', linewidth=2, linestyle='solid'),
+            Line2D([0], [0], color='orange', linewidth=2, linestyle='dashed')
+        ]
+        
+        axes[0].set_title('Distance loss')
+        axes[1].set_title('Class probability loss')
         
         axes[0].set_xlabel('Steps')
         axes[1].set_xlabel('Steps')
         
         axes[0].set_ylabel('Loss')
         axes[1].set_ylabel('Loss')
+        
+        axes[0].legend(handles=handles ,labels=['Training Distance Loss', 'Validation Distance Loss'])
+        axes[1].legend(handles=handles ,labels=['Training Class Loss', 'Validation Class Loss'])
         
         plt.savefig(self.model_dir / Path('training_stats.png'))
         
@@ -287,14 +301,30 @@ class VGGLoader(Loader):
             class_mapper_iter[object_id] = class_int
             
             if shape['name'] == 'circle':
-                canvas.circle(xy=(shape['cx'], shape['cy']), radius=shape['r'], fill=object_id, outline=object_id)
+                canvas.circle(xy=(shape['cx'], shape['cy']), radius=shape['r'], fill=class_int, outline=class_int)
+                #canvas.circle(xy=(shape['cx'], shape['cy']), radius=shape['r'], fill=object_id, outline=object_id)
             else:
                 raise ValueError('Shape not a circle, please implement non circular shapes in this code')
         
         mask = Image.new(mode='L', size=img_size, color=0)
         canvas = ImageDraw.Draw(mask, mode='L')
+        
+        
         data = pd.read_csv(path)[['region_shape_attributes', 'region_attributes', 'region_id']]
         data.apply(add_label, axis=1)
+
+        # im = plt.imshow(mask,
+        #            interpolation=None)
+        
+        # from matplotlib import patches as mpatches
+        # values = list(range(1, 5))
+        # labels = ["No split", "1-split", "2-split", "3-split"]
+        # colors = [im.cmap(im.norm(value)) for value in values]
+        # patches = [mpatches.Patch(color=colors[i], label=labels[i]) for i in range(len(values)) ]
+        
+        
+        # plt.legend(handles=patches, bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0)
+        # plt.show()
         
         return np.array(mask).astype(np.uint8), class_mapper_iter
     
@@ -318,8 +348,8 @@ if __name__ == '__main__':
     #model dir where model is stored or being written to
     model_dir = "test"
     
-    epochs = 5
-    batch_size = 11
+    epochs = 1
+    batch_size = 4
     validation_percentage = 20
     image_format = 'YXC'
     mask_format = 'YXC'
@@ -327,7 +357,7 @@ if __name__ == '__main__':
     
     # Makes a new model, turn off once one is created
     # This consumes a lot of memory, be careful
-    overwrite = True
+    overwrite = False
     
     
     classes = 4
@@ -352,7 +382,6 @@ if __name__ == '__main__':
                         config_kwargs=config
                         )
     
-    counts = 5
     for progress in model.train():
         print(f"Progress: {progress*100}% done")
     model.history_chart()
