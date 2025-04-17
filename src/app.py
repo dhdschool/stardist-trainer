@@ -1,6 +1,6 @@
 import panel as pn
 import sys
-from model import StarDistAPI
+from model_limit import StarDistAPI
 #import widgets
 from pathlib import Path
 
